@@ -21,6 +21,10 @@
 
 #define ADDR_BROADCAST 0xFFFF
 
+// UART callback function
+static void char_rx(handler_arg_t arg, uint8_t c);
+static void handle_cmd(handler_arg_t arg);
+
 // timer alarm function
 static void alarm(handler_arg_t arg);
 static soft_timer_t tx_timer;
@@ -30,6 +34,31 @@ static soft_timer_t tx_timer;
 // print help every second
 volatile int8_t print_help  = 1;
 volatile int8_t leds_active = 1;
+
+/**
+ * Sensors
+ */
+#ifdef IOTLAB_M3
+static void temperature_sensor()
+{
+    int16_t value;
+    lps331ap_read_temp(&value);
+    printf("Chip temperature measure: %f\n", 42.5 + value / 480.0);
+}
+
+static void light_sensor()
+{
+    float value = isl29020_read_sample();
+    printf("Luminosity measure: %f lux\n", value);
+}
+
+static void pressure_sensor()
+{
+    uint32_t value;
+    lps331ap_read_pres(&value);
+    printf("Pressure measure: %f mabar\n", value / 4096.0);
+}
+#endif
 
 
 /*
@@ -161,6 +190,38 @@ static void hardware_init()
 
 }
 
+static void handle_cmd(handler_arg_t arg)
+{
+    switch ((char) (uint32_t) arg) {
+#ifdef IOTLAB_M3
+        case 't':
+            temperature_sensor();
+            break;
+        case 'l':
+            light_sensor();
+            break;
+        case 'p':
+            pressure_sensor();
+            break;
+#endif
+        case 's':
+            send_packet();
+            break;
+        case 'b':
+            send_big_packet();
+            break;
+        case 'e':
+            leds_action();
+            break;
+        case '\n':
+            printf("\ncmd > ");
+            break;
+        case 'h':
+        default:
+            print_usage();
+            break;
+    }
+}
 
 int main()
 {
@@ -170,9 +231,31 @@ int main()
     return 0;
 }
 
-static void boucle(){
-int i = 0;
-while (i < 1) {
-    send_big_packet();
+
+/* Reception of a char on UART and store it in 'cmd' */
+static void char_rx(handler_arg_t arg, uint8_t c) {
+    // disable help message after receiving char
+    print_help = 0;
+    event_post_from_isr(EVENT_QUEUE_APPLI, handle_cmd,
+            (handler_arg_t)(uint32_t) c);
 }
+
+static void alarm(handler_arg_t arg) {
+     if (leds_active)
+       leds_toggle(LED_0 | LED_1 | LED_2);
+
+    /* Print help before getting first real \n */
+    if (print_help) {
+        event_post(EVENT_QUEUE_APPLI, handle_cmd, (handler_arg_t) 'h');
+        event_post(EVENT_QUEUE_APPLI, handle_cmd, (handler_arg_t) '\n');
+    }
+
+}
+
+
+static void boucle(){
+    int i = 0;
+    while (i < 1) {
+    send_big_packet();
+    }
 }
